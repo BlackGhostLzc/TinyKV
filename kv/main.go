@@ -31,6 +31,7 @@ var (
 func main() {
 	flag.Parse()
 	conf := config.NewDefaultConfig()
+	println("tiny-server start up.....\n")
 	if *schedulerAddr != "" {
 		conf.SchedulerAddr = *schedulerAddr
 	}
