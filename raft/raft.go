@@ -246,6 +246,14 @@ func (r *Raft) tick() {
 		}
 
 	case StateCandidate:
+		r.electionElapsed++
+		if r.electionElapsed >= r.electionTimeout {
+			r.electionElapsed = 0
+			err := r.Step(pb.Message{MsgType: pb.MessageType_MsgHup})
+			if err != nil {
+				return
+			}
+		}
 
 	case StateLeader:
 		r.heartbeatElapsed++
@@ -261,7 +269,7 @@ func (r *Raft) tick() {
 
 }
 
-func (r *Raft) setRandomizedElectionTimeout() {
+func (r *Raft) resetRandomizedElectionTimeout() {
 	rand.Seed(time.Now().UnixNano()) // 使用当前时间的纳秒数作为随机数种子
 	randomInt := rand.Intn(10)
 	// [10,20) 之间的数
@@ -288,7 +296,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.heartbeatElapsed = 0
 
 	// 随机化选举超时时间,避免选举时票数均匀导致多次选举
-	r.setRandomizedElectionTimeout()
+	r.resetRandomizedElectionTimeout()
 }
 
 // becomeCandidate transform this peer's state to candidate
@@ -306,6 +314,8 @@ func (r *Raft) becomeCandidate() {
 
 	r.Vote = r.id
 	r.votes[r.id] = true
+
+	r.resetRandomizedElectionTimeout()
 }
 
 // becomeLeader transform this peer's state to leader
@@ -361,6 +371,8 @@ func (r *Raft) stepFollower(m pb.Message) error {
 	case pb.MessageType_MsgAppend:
 		// 收到一个AppendEntriesRPC
 		r.handleAppendEntries(m)
+	case pb.MessageType_MsgRequestVote:
+		r.handleRequestVote(m)
 	}
 	return nil
 }
@@ -371,6 +383,11 @@ func (r *Raft) stepCandidate(m pb.Message) error {
 		r.handleRequestVoteResponse(m)
 	case pb.MessageType_MsgAppend:
 		r.handleAppendEntries(m)
+	case pb.MessageType_MsgHup:
+		// 又一次选举超时....
+		r.startElection()
+	case pb.MessageType_MsgRequestVote:
+		r.handleRequestVote(m)
 	}
 	return nil
 }
@@ -386,16 +403,16 @@ func (r *Raft) stepLeader(m pb.Message) error {
 				r.sendHeartbeat(pr)
 			}
 		}
+	case pb.MessageType_MsgRequestVote:
+		r.handleRequestVote(m)
 	}
 	return nil
 }
 
 func (r *Raft) sendRequestVote(to uint64) {
-	lastLogIndex := r.RaftLog.LastIndex()        // prevLogIndex
-	logTerm, err := r.RaftLog.Term(lastLogIndex) // prevLogTerm
-	if err != nil {
-		return
-	}
+	lastLogIndex := r.RaftLog.LastIndex()      // prevLogIndex
+	logTerm, _ := r.RaftLog.Term(lastLogIndex) // prevLogTerm
+
 	message := pb.Message{
 		MsgType: pb.MessageType_MsgRequestVote,
 		To:      to,
@@ -403,6 +420,40 @@ func (r *Raft) sendRequestVote(to uint64) {
 		Term:    r.Term,
 		Index:   lastLogIndex, // prevLogIndex
 		LogTerm: logTerm,      // prevLogTerm
+	}
+	r.msgs = append(r.msgs, message)
+}
+
+func (r *Raft) handleRequestVote(m pb.Message) {
+	// 自己的 term 大于选举者的 term
+	if r.Term > m.Term {
+		r.sendRequestVoteResponse(m.From, true)
+		return
+	}
+
+	// 自己的 term 要小于等于选举者的 term
+	if r.Term < m.Term {
+		r.becomeFollower(m.Term, None) // becomeFollower里面有Vote置为None的逻辑
+	}
+
+	// 其实还要比较日志进行一致性检查 TODO()
+	if r.Vote == None || r.Vote == m.From {
+		// 如果raft没有投票或者投的票指向 m.From
+		r.Vote = m.From
+		r.sendRequestVoteResponse(m.From, false)
+		return
+	}
+
+	r.sendRequestVoteResponse(m.From, true)
+}
+
+func (r *Raft) sendRequestVoteResponse(to uint64, reject bool) {
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgRequestVoteResponse,
+		Term:    r.Term,
+		To:      to,
+		From:    r.id,
+		Reject:  reject,
 	}
 	r.msgs = append(r.msgs, message)
 }
@@ -415,6 +466,8 @@ func (r *Raft) startElection() {
 		return
 	}
 	r.becomeCandidate()
+
+	// 向每一个 raft 发送
 	for p := range r.Prs {
 		if p != r.id {
 			r.sendRequestVote(p)

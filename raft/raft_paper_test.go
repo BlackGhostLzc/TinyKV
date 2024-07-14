@@ -119,6 +119,8 @@ func TestLeaderBcastBeat2AA(t *testing.T) {
 func TestFollowerStartElection2AA(t *testing.T) {
 	testNonleaderStartElection(t, StateFollower)
 }
+
+// PASS
 func TestCandidateStartNewElection2AA(t *testing.T) {
 	testNonleaderStartElection(t, StateCandidate)
 }
@@ -216,6 +218,7 @@ func TestLeaderElectionInOneRoundRPC2AA(t *testing.T) {
 // TestFollowerVote tests that each follower will vote for at most one
 // candidate in a given term, on a first-come-first-served basis.
 // Reference: section 5.2
+// PASS
 func TestFollowerVote2AA(t *testing.T) {
 	tests := []struct {
 		vote    uint64
@@ -232,8 +235,10 @@ func TestFollowerVote2AA(t *testing.T) {
 	for i, tt := range tests {
 		r := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 		r.Term = 1
+		// 这个raft已经投给其他人了
 		r.Vote = tt.vote
 
+		// raft收到别人的请求投票就不会再给了
 		r.Step(pb.Message{From: tt.nvote, To: 1, Term: 1, MsgType: pb.MessageType_MsgRequestVote})
 
 		msgs := r.readMessages()
@@ -251,6 +256,7 @@ func TestFollowerVote2AA(t *testing.T) {
 // to be leader whose term is at least as large as the candidate's current term,
 // it recognizes the leader as legitimate and returns to follower state.
 // Reference: section 5.2
+// PASS
 func TestCandidateFallback2AA(t *testing.T) {
 	tests := []pb.Message{
 		{From: 2, To: 1, Term: 1, MsgType: pb.MessageType_MsgAppend},
@@ -274,6 +280,7 @@ func TestCandidateFallback2AA(t *testing.T) {
 	}
 }
 
+// PASS
 func TestFollowerElectionTimeoutRandomized2AA(t *testing.T) {
 	testNonleaderElectionTimeoutRandomized(t, StateFollower)
 }
@@ -303,6 +310,11 @@ func testNonleaderElectionTimeoutRandomized(t *testing.T, state StateType) {
 		}
 		timeouts[time] = true
 	}
+
+	for id, val := range timeouts {
+		fmt.Printf("%d %v ", id, val)
+	}
+	fmt.Printf("\n")
 
 	for d := et + 1; d < 2*et; d++ {
 		if !timeouts[d] {
