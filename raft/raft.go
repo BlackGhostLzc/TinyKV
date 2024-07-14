@@ -16,6 +16,8 @@ package raft
 
 import (
 	"errors"
+	"math/rand"
+	"time"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -164,8 +166,49 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
+
 	// Your Code Here (2A).
-	return nil
+	hardState, _, err := c.Storage.InitialState()
+	if err != nil {
+		panic("newRaft failed: hardState error")
+	}
+
+	raftLog := newLog(c.Storage)
+
+	// map[uint64]*Progress
+	prs := make(map[uint64]*Progress)
+	// 从 peers []uint64 构造这个 prs
+	for _, peer := range c.peers {
+		// 这里一开始先为 0, 到后面变成Leader后， Match = 0, Next = lastIndex + 1
+		p := &Progress{
+			Match: 0,
+			Next:  0,
+		}
+		prs[peer] = p
+	}
+
+	raft := &Raft{
+		id:      c.ID,
+		Term:    hardState.Term,
+		Vote:    hardState.Vote,
+		RaftLog: raftLog,
+
+		Prs:   prs,
+		State: StateFollower,
+		votes: make(map[uint64]bool),
+		msgs:  nil,
+		Lead:  None,
+
+		heartbeatTimeout: c.HeartbeatTick,
+		electionTimeout:  c.ElectionTick,
+		heartbeatElapsed: 0,
+		electionElapsed:  0,
+
+		// leadTransferee:
+		// PendingConfIndex:
+	}
+
+	return raft
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the
@@ -178,44 +221,239 @@ func (r *Raft) sendAppend(to uint64) bool {
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	// 这个函数只需要把心跳信心放入 raft.msg 中,再由上层调用HandleRaftReady函数发送就行
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeat,
+		To:      to,
+		From:    r.id,
+		Term:    r.Term,
+	}
+	r.msgs = append(r.msgs, message)
 }
 
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
+	switch r.State {
+	case StateFollower:
+		r.electionElapsed++
+		if r.electionElapsed >= r.electionTimeout {
+			r.electionElapsed = 0
+			err := r.Step(pb.Message{MsgType: pb.MessageType_MsgHup})
+			if err != nil {
+				return
+			}
+		}
+
+	case StateCandidate:
+
+	case StateLeader:
+		r.heartbeatElapsed++
+		if r.heartbeatElapsed >= r.heartbeatTimeout {
+			r.heartbeatElapsed = 0
+			// 广播心跳   pb.Message
+			err := r.Step(pb.Message{MsgType: pb.MessageType_MsgBeat})
+			if err != nil {
+				return
+			}
+		}
+	}
+
+}
+
+func (r *Raft) setRandomizedElectionTimeout() {
+	rand.Seed(time.Now().UnixNano()) // 使用当前时间的纳秒数作为随机数种子
+	randomInt := rand.Intn(10)
+	// [10,20) 之间的数
+	r.electionTimeout += randomInt
+	for r.electionTimeout >= 20 {
+		r.electionTimeout -= 10
+	}
 }
 
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	// Your Code Here (2A).
+	// 如果他给别的投了一票，然后又变成follower,但它的term没有变化，这里的vote该如何改变
+	if r.Term != term {
+		r.Vote = None
+		r.votes = make(map[uint64]bool)
+	}
+
+	r.Term = term
+	r.Lead = lead
+	r.State = StateFollower
+
+	r.electionElapsed = 0
+	r.heartbeatElapsed = 0
+
+	// 随机化选举超时时间,避免选举时票数均匀导致多次选举
+	r.setRandomizedElectionTimeout()
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	// 首先要把自己的 term + 1
+	r.Term = r.Term + 1
+	r.State = StateCandidate
+	r.Vote = None
+
+	// 根据这个判断有没有超过半数给自己投票,变成candidate的时候重置votes
+	r.votes = make(map[uint64]bool)
+	r.electionElapsed = 0
+	r.heartbeatElapsed = 0
+
+	r.Vote = r.id
+	r.votes[r.id] = true
 }
 
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	r.State = StateLeader
+	r.heartbeatElapsed = 0
+	r.Lead = r.id
+	r.heartbeatElapsed = 0
+	// 需要更改 r.Prs
+	lastIndex := r.RaftLog.LastIndex()
+	for _, p := range r.Prs {
+		p.Match = 0
+		p.Next = lastIndex + 1
+	}
+
+	// 追加一条空日志
+	r.RaftLog.entries = append(r.RaftLog.entries, pb.Entry{Term: r.Term, Index: lastIndex + 1})
+	// 更新自己的 match 和 next
+	r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
+	r.Prs[r.id].Match = r.Prs[r.id].Next - 1
+
+	// 向所有的节点发送
+	for peer := range r.Prs {
+		if peer != r.id {
+			r.sendAppend(peer)
+		}
+	}
+
 }
 
 // Step the entrance of handle message, see `MessageType`
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+	var err error = nil
 	switch r.State {
 	case StateFollower:
+		err = r.stepFollower(m)
 	case StateCandidate:
+		err = r.stepCandidate(m)
 	case StateLeader:
+		err = r.stepLeader(m)
+	}
+	return err
+}
+
+func (r *Raft) stepFollower(m pb.Message) error {
+	switch m.MsgType {
+	case pb.MessageType_MsgHup:
+		r.startElection()
+	case pb.MessageType_MsgAppend:
+		// 收到一个AppendEntriesRPC
+		r.handleAppendEntries(m)
 	}
 	return nil
+}
+
+func (r *Raft) stepCandidate(m pb.Message) error {
+	switch m.MsgType {
+	case pb.MessageType_MsgRequestVoteResponse:
+		r.handleRequestVoteResponse(m)
+	case pb.MessageType_MsgAppend:
+		r.handleAppendEntries(m)
+	}
+	return nil
+}
+
+func (r *Raft) stepLeader(m pb.Message) error {
+	switch m.MsgType {
+	case pb.MessageType_MsgAppend:
+		r.handleAppendEntries(m)
+	case pb.MessageType_MsgBeat:
+		// 需要进行广播心跳
+		for pr := range r.Prs {
+			if r.id != pr {
+				r.sendHeartbeat(pr)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Raft) sendRequestVote(to uint64) {
+	lastLogIndex := r.RaftLog.LastIndex()        // prevLogIndex
+	logTerm, err := r.RaftLog.Term(lastLogIndex) // prevLogTerm
+	if err != nil {
+		return
+	}
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgRequestVote,
+		To:      to,
+		From:    r.id,
+		Term:    r.Term,
+		Index:   lastLogIndex, // prevLogIndex
+		LogTerm: logTerm,      // prevLogTerm
+	}
+	r.msgs = append(r.msgs, message)
+}
+
+func (r *Raft) startElection() {
+	// 如果集群中只有一个节点，那么需要特殊处理，否则永远不会执行handleRequestVote函数，也就不会成为leader
+	if len(r.Prs) == 1 {
+		r.becomeCandidate()
+		r.becomeLeader()
+		return
+	}
+	r.becomeCandidate()
+	for p := range r.Prs {
+		if p != r.id {
+			r.sendRequestVote(p)
+		}
+	}
+}
+
+func (r *Raft) handleRequestVoteResponse(m pb.Message) {
+	if m.Term < r.Term {
+		return
+	}
+
+	if !m.Reject {
+		r.votes[m.From] = true
+		agreeNum := 0
+		for _, granted := range r.votes {
+			if granted == true {
+				agreeNum++
+			}
+		}
+
+		// 已经当选leader又一次获得选票时，由于状态的变更所以不会执行stepCandidate，所以也不会再次执行到这里
+		if agreeNum >= (len(r.Prs)+1)/2 {
+			r.becomeLeader()
+		}
+		return
+	}
+
+	r.votes[m.From] = false
 }
 
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
+
+	if m.Term >= r.Term {
+		r.becomeFollower(m.Term, m.From)
+	}
+
 }
 
 // handleHeartbeat handle Heartbeat RPC request

@@ -34,12 +34,17 @@ import (
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
+// PASS
 func TestFollowerUpdateTermFromMessage2AA(t *testing.T) {
 	testUpdateTermFromMessage(t, StateFollower)
 }
+
+// PASS
 func TestCandidateUpdateTermFromMessage2AA(t *testing.T) {
 	testUpdateTermFromMessage(t, StateCandidate)
 }
+
+// PASS
 func TestLeaderUpdateTermFromMessage2AA(t *testing.T) {
 	testUpdateTermFromMessage(t, StateLeader)
 }
@@ -84,6 +89,7 @@ func TestStartAsFollower2AA(t *testing.T) {
 // it will send a MessageType_MsgHeartbeat with m.Index = 0, m.LogTerm=0 and empty entries
 // as heartbeat to all followers.
 // Reference: section 5.2
+// PASS
 func TestLeaderBcastBeat2AA(t *testing.T) {
 	// heartbeat interval
 	hi := 1
@@ -109,6 +115,7 @@ func TestLeaderBcastBeat2AA(t *testing.T) {
 	}
 }
 
+// PASS
 func TestFollowerStartElection2AA(t *testing.T) {
 	testNonleaderStartElection(t, StateFollower)
 }
@@ -126,6 +133,7 @@ func TestCandidateStartNewElection2AA(t *testing.T) {
 // start a new election by incrementing its term and initiating another
 // round of RequestVote RPCs.
 // Reference: section 5.2
+// PASS
 func testNonleaderStartElection(t *testing.T, state StateType) {
 	// election timeout
 	et := 10
@@ -167,6 +175,7 @@ func testNonleaderStartElection(t *testing.T, state StateType) {
 // b) it loses the election
 // c) it is unclear about the result
 // Reference: section 5.2
+// PASS
 func TestLeaderElectionInOneRoundRPC2AA(t *testing.T) {
 	tests := []struct {
 		size  int
