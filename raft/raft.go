@@ -17,6 +17,7 @@ package raft
 import (
 	"errors"
 	"math/rand"
+	"sort"
 	"time"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
@@ -213,9 +214,51 @@ func newRaft(c *Config) *Raft {
 
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer. Returns true if a message was sent.
-func (r *Raft) sendAppend(to uint64) bool {
+func (r *Raft) sendAppend(to uint64) {
 	// Your Code Here (2A).
-	return false
+	nextIndex := r.Prs[to].Next
+	// fmt.Printf("raft %v 的nextIndex是%v\n", to, nextIndex)
+	prevLogIndex := nextIndex - 1
+	prevLogTerm, _ := r.RaftLog.Term(prevLogIndex)
+	firstIndex, _ := r.RaftLog.storage.FirstIndex()
+
+	// 如果新加入节点,或者 follower大幅度落后leader,会出现日志找不到的情况（已经被截断)
+	if nextIndex < firstIndex {
+		// 发送快照
+		// TODO()
+		return
+	}
+
+	// 那么就可以从 RaftLog.Entries中发送
+	var entries []*pb.Entry
+	lastIndex := r.RaftLog.LastIndex()
+	if nextIndex > lastIndex {
+		// 不需要发送，已经是最新的了
+		return
+	}
+	// [nextIndex, lastIndex]都要发送
+	// 0   1   2   3   4   5   6   7   8
+	// f       n                       l
+
+	for i := nextIndex; i <= lastIndex; i++ {
+		entries = append(entries, &r.RaftLog.entries[i-firstIndex])
+	}
+
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgAppend,
+		To:      to,
+		From:    r.id,
+		Term:    r.Term,
+
+		LogTerm: prevLogTerm,   // 对应论文的 prevLogTerm
+		Index:   nextIndex - 1, // 对应论文的 prevLogIndex
+		Entries: entries,
+		Commit:  r.RaftLog.committed,
+	}
+
+	r.msgs = append(r.msgs, message)
+
+	return
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
@@ -405,8 +448,85 @@ func (r *Raft) stepLeader(m pb.Message) error {
 		}
 	case pb.MessageType_MsgRequestVote:
 		r.handleRequestVote(m)
+	case pb.MessageType_MsgPropose:
+		r.handlePropose(m)
+	case pb.MessageType_MsgAppendResponse:
+		r.handleAppendEntriesResponse(m)
 	}
 	return nil
+}
+
+func (r *Raft) appendEntry(entries []*pb.Entry) {
+	for i := range entries {
+		entries[i].Term = r.Term
+		entries[i].Index = r.RaftLog.LastIndex() + 1
+		r.RaftLog.entries = append(r.RaftLog.entries, *entries[i])
+	}
+
+	r.Prs[r.id].Match = r.RaftLog.LastIndex()
+	r.Prs[r.id].Next = r.Prs[r.id].Match + 1
+}
+
+func (r *Raft) handlePropose(m pb.Message) {
+	// 在raftLog中添加日志
+	r.appendEntry(m.Entries)
+
+	// 这里不需要更新所有的其他节点的 matchIndex 和 nextIndex
+	// 向所有的节点发送 AppendEntryRPC
+	for i := range r.Prs {
+		if i != r.id {
+			r.sendAppend(i)
+		}
+	}
+
+	// 如果这个 raft 集群只有 1 台机器，那么直接要进行提交
+	if len(r.Prs) == 1 {
+		r.Prs[r.id].Match = r.RaftLog.LastIndex()
+		r.Prs[r.id].Next = r.Prs[r.id].Match + 1
+		r.RaftLog.committed = r.Prs[r.id].Match
+	}
+}
+
+func (r *Raft) maybeUpdateCommitIndex() {
+	// 根据 r.Prs中的 matchIndex 得出
+	// 按照论文的思路更新 commit。
+	// 即：假设存在 N 满足N > commitIndex，使得大多数的 matchIndex[i] ≥ N以及 log[N].term == currentTerm 成立，
+	// 则令 commitIndex = N。为了快速更新，这里先将节点按照 match 进行了递增排序，这样就可以快速确定 N 的位置。
+	match := make(uint64Slice, len(r.Prs))
+	i := 0
+	for _, p := range r.Prs {
+		match[i] = p.Match
+		i++
+	}
+	sort.Sort(match)
+
+	// 所以 leader 一定要记得更新自己的 matchIndex
+	// number = 17   超过半数是 9
+	// 1  2  3  4  4  4  5  6  7  7  8  9  10  10  10  10  20
+	// 0  1  2  3  4  5  6  7  8  9  10 11 12  13  14  15  16
+	// 要超过半数才能算 commit
+	commitIndex := match[(len(r.Prs)-1)/2]
+	// 从这条 commitIndex 开始往前推，找到第一条满足条件的就行 [r.Commit, commitIndex]
+	for ; commitIndex > r.RaftLog.committed; commitIndex-- {
+		term, _ := r.RaftLog.Term(commitIndex)
+		if term == r.Term {
+			break
+		}
+	}
+
+	r.RaftLog.committed = commitIndex
+	// 需不需要在这里更新一下 stableIndex
+
+}
+
+func (r *Raft) handleAppendEntriesResponse(m pb.Message) {
+	if !m.Reject {
+		r.Prs[m.From].Next = m.Index + 1
+		r.Prs[m.From].Match = m.Index
+	}
+
+	// 可能还需要更新 commitIndex
+	r.maybeUpdateCommitIndex()
 }
 
 func (r *Raft) sendRequestVote(to uint64) {
@@ -419,7 +539,8 @@ func (r *Raft) sendRequestVote(to uint64) {
 		From:    r.id,
 		Term:    r.Term,
 		Index:   lastLogIndex, // prevLogIndex
-		LogTerm: logTerm,      // prevLogTerm
+
+		LogTerm: logTerm, // prevLogTerm
 	}
 	r.msgs = append(r.msgs, message)
 }
@@ -499,14 +620,67 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 	r.votes[m.From] = false
 }
 
+func (r *Raft) sendAppendEntriesResponse(to uint64, reject bool) {
+
+}
+
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
-
 	if m.Term >= r.Term {
 		r.becomeFollower(m.Term, m.From)
 	}
 
+	if r.Term > m.Term {
+		r.sendAppendEntriesResponse(m.From, true)
+		return
+	}
+
+	prevLogIndex := m.Index
+	prevLogTerm := m.LogTerm
+	if prevLogIndex > r.RaftLog.LastIndex() {
+		// 说明该 raft 的日志不完整
+		// 为了快速定位，该raft需要向leader告诉它自己的
+		// Index	r.RaftLog.LastIndex()；该字段用于 Leader 更快地去更新 next
+		r.sendAppendEntriesResponse(m.From, true)
+		return
+	}
+
+	logTerm, _ := r.RaftLog.Term(prevLogIndex)
+	if logTerm != prevLogTerm {
+		// Index	r.RaftLog.LastIndex()；该字段用于 Leader 更快地去更新 next
+		r.sendAppendEntriesResponse(m.From, true)
+		return
+	}
+
+	// 现在可以为 raft 添加日志, 从 index=prevLogIndex + 1开始添加
+	entryLen := len(m.Entries)
+	for i := 0; i < entryLen; i++ {
+		index := m.Entries[i].Index
+		term := m.Entries[i].Term
+
+		oldTerm, err1 := r.RaftLog.Term(index)
+		firstIndex, _ := r.RaftLog.storage.FirstIndex()
+		// 不存在这条日志,那么往后的日志直接append到r.RaftLog中
+		if err1 != nil || index-firstIndex > uint64(len(r.RaftLog.entries)) {
+			r.RaftLog.entries = append(r.RaftLog.entries, *m.Entries[i])
+		} else if oldTerm != term {
+			// 后面的日志需要重写
+			// index 如果要小于 firstIndex 那该怎么办
+			if index >= firstIndex {
+				r.RaftLog.entries = r.RaftLog.entries[0 : index-firstIndex]
+			} else {
+				r.RaftLog.entries = make([]pb.Entry, 0)
+			}
+
+			r.RaftLog.stabled = r.RaftLog.LastIndex()
+		}
+	}
+
+	// 如何更新 commit index ?
+	// 记录下当前追加的最后一个条目的 Index。
+	// 比较 Leader 已知已经提交的最高的日志条目的索引 m.Commit 或者是上一个新条目的索引，然后取两者的最小值
+	r.RaftLog.committed = max(min(m.Commit, r.RaftLog.LastIndex()), r.RaftLog.committed)
 }
 
 // handleHeartbeat handle Heartbeat RPC request

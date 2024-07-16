@@ -311,11 +311,6 @@ func testNonleaderElectionTimeoutRandomized(t *testing.T, state StateType) {
 		timeouts[time] = true
 	}
 
-	for id, val := range timeouts {
-		fmt.Printf("%d %v ", id, val)
-	}
-	fmt.Printf("\n")
-
 	for d := et + 1; d < 2*et; d++ {
 		if !timeouts[d] {
 			t.Errorf("timeout in %d ticks should happen", d)
@@ -323,9 +318,12 @@ func testNonleaderElectionTimeoutRandomized(t *testing.T, state StateType) {
 	}
 }
 
+// PASS
 func TestFollowersElectionTimeoutNonconflict2AA(t *testing.T) {
 	testNonleadersElectionTimeoutNonconflict(t, StateFollower)
 }
+
+// PASS
 func TestCandidatesElectionTimeoutNonconflict2AA(t *testing.T) {
 	testNonleadersElectionTimeoutNonconflict(t, StateCandidate)
 }
@@ -381,6 +379,7 @@ func testNonleadersElectionTimeoutNonconflict(t *testing.T, state StateType) {
 // the new entries.
 // Also, it writes the new entry into stable storage.
 // Reference: section 5.3
+// PASS
 func TestLeaderStartReplication2AB(t *testing.T) {
 	s := NewMemoryStorage()
 	r := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, s)
@@ -421,6 +420,7 @@ func TestLeaderStartReplication2AB(t *testing.T) {
 // and it includes that index in future AppendEntries RPCs so that the other
 // servers eventually find out.
 // Reference: section 5.3
+// PASS
 func TestLeaderCommitEntry2AB(t *testing.T) {
 	s := NewMemoryStorage()
 	r := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, s)
@@ -459,6 +459,7 @@ func TestLeaderCommitEntry2AB(t *testing.T) {
 // TestLeaderAcknowledgeCommit tests that a log entry is committed once the
 // leader that created the entry has replicated it on a majority of the servers.
 // Reference: section 5.3
+// PASS
 func TestLeaderAcknowledgeCommit2AB(t *testing.T) {
 	tests := []struct {
 		size      int
@@ -501,6 +502,7 @@ func TestLeaderAcknowledgeCommit2AB(t *testing.T) {
 // entries created by previous leaders.
 // Also, it applies the entry to its local state machine (in log order).
 // Reference: section 5.3
+// PASS
 func TestLeaderCommitPrecedingEntries2AB(t *testing.T) {
 	tests := [][]pb.Entry{
 		{},
@@ -532,6 +534,7 @@ func TestLeaderCommitPrecedingEntries2AB(t *testing.T) {
 // TestFollowerCommitEntry tests that once a follower learns that a log entry
 // is committed, it applies the entry to its local state machine (in log order).
 // Reference: section 5.3
+// PASS
 func TestFollowerCommitEntry2AB(t *testing.T) {
 	tests := []struct {
 		ents   []*pb.Entry
@@ -916,7 +919,6 @@ func commitNoopEntry(r *Raft, s *MemoryStorage) {
 		if id == r.id {
 			continue
 		}
-
 		r.sendAppend(id)
 	}
 	// simulate the response of MessageType_MsgAppend
@@ -944,6 +946,6 @@ func acceptAndReply(m pb.Message) pb.Message {
 		To:      m.From,
 		Term:    m.Term,
 		MsgType: pb.MessageType_MsgAppendResponse,
-		Index:   m.Index + uint64(len(m.Entries)),
+		Index:   m.Index + uint64(len(m.Entries)), // 记录下当前追加的最后一个条目的 Index
 	}
 }

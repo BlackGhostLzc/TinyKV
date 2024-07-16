@@ -96,24 +96,64 @@ func (l *RaftLog) allEntries() []pb.Entry {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	// snapshot/first.....applied....committed....stabled.....last
+	// 返回 [stabled + 1, last] 这段的 entries
+	lastIndex := l.LastIndex()
+	if l.stabled == lastIndex {
+		return make([]pb.Entry, 0)
+	}
+
+	if len(l.entries) > 0 {
+		firstIndex, _ := l.storage.FirstIndex()
+		if l.stabled >= firstIndex {
+			return l.entries[l.stabled-firstIndex+1:]
+		}
+
+		return l.entries
+	}
+
+	return make([]pb.Entry, 0)
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return nil
+	// snapshot/first.....applied....committed....stabled.....last
+	if len(l.entries) > 0 {
+		firstIndex, _ := l.storage.FirstIndex()
+		if l.committed == l.applied {
+			return make([]pb.Entry, 0)
+		}
+		if l.applied >= firstIndex-1 {
+			return l.entries[l.applied-firstIndex+1 : l.committed-firstIndex+1]
+		}
+	}
+	return make([]pb.Entry, 0)
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return 0
+	if len(l.entries) > 0 {
+		return l.entries[len(l.entries)-1].Index
+	}
+
+	index, _ := l.storage.LastIndex()
+	return index
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
+	// ----snapshot---- firstIndex ...... lastIndex
+	if len(l.entries) > 0 {
+		firstIndex, _ := l.storage.FirstIndex()
+		lastIndex := l.LastIndex()
+		if i >= firstIndex && i <= lastIndex {
+			return l.entries[i-firstIndex].Term, nil
+		}
+	}
 
-	return 0, nil
+	term, err := l.storage.Term(i)
+	return term, err
 }
