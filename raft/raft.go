@@ -232,9 +232,11 @@ func (r *Raft) sendAppend(to uint64) {
 	// 那么就可以从 RaftLog.Entries中发送
 	var entries []*pb.Entry
 	lastIndex := r.RaftLog.LastIndex()
+
 	if nextIndex > lastIndex {
-		// 不需要发送，已经是最新的了
-		return
+		// 不需要发送，已经是最新的了,
+		// 真的吗，这个可能是用来更新 commit Index 的
+
 	}
 	// [nextIndex, lastIndex]都要发送
 	// 0   1   2   3   4   5   6   7   8
@@ -255,7 +257,7 @@ func (r *Raft) sendAppend(to uint64) {
 		Entries: entries,
 		Commit:  r.RaftLog.committed,
 	}
-
+	// fmt.Printf("leader 发送一个appendEntries, commitIndex is %d\n", r.RaftLog.committed)
 	r.msgs = append(r.msgs, message)
 
 	return
@@ -452,6 +454,8 @@ func (r *Raft) stepLeader(m pb.Message) error {
 		r.handlePropose(m)
 	case pb.MessageType_MsgAppendResponse:
 		r.handleAppendEntriesResponse(m)
+	case pb.MessageType_MsgHup:
+		// 什么都不要干
 	}
 	return nil
 }
@@ -492,6 +496,7 @@ func (r *Raft) maybeUpdateCommitIndex() {
 	// 按照论文的思路更新 commit。
 	// 即：假设存在 N 满足N > commitIndex，使得大多数的 matchIndex[i] ≥ N以及 log[N].term == currentTerm 成立，
 	// 则令 commitIndex = N。为了快速更新，这里先将节点按照 match 进行了递增排序，这样就可以快速确定 N 的位置。
+	oldCommit := r.RaftLog.committed
 	match := make(uint64Slice, len(r.Prs))
 	i := 0
 	for _, p := range r.Prs {
@@ -515,18 +520,30 @@ func (r *Raft) maybeUpdateCommitIndex() {
 	}
 
 	r.RaftLog.committed = commitIndex
-	// 需不需要在这里更新一下 stableIndex
+	// fmt.Printf("leader commit index is %d\n", commitIndex)
 
+	if r.RaftLog.committed != oldCommit {
+		for peer := range r.Prs {
+			if r.id != peer {
+				r.sendAppend(peer)
+			}
+		}
+	}
 }
 
 func (r *Raft) handleAppendEntriesResponse(m pb.Message) {
 	if !m.Reject {
 		r.Prs[m.From].Next = m.Index + 1
 		r.Prs[m.From].Match = m.Index
+		// 可能还需要更新 commitIndex
+		r.maybeUpdateCommitIndex()
+		return
 	}
 
-	// 可能还需要更新 commitIndex
-	r.maybeUpdateCommitIndex()
+	// 否则需要重新发送
+	// 重新发送如何更新 NextIndex
+	r.Prs[m.From].Next -= 1
+	r.sendAppend(m.From)
 }
 
 func (r *Raft) sendRequestVote(to uint64) {
@@ -621,11 +638,23 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 }
 
 func (r *Raft) sendAppendEntriesResponse(to uint64, reject bool) {
+	// fmt.Printf("发送 AppendEntriesResponse\n")
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgAppendResponse,
+		To:      to,
+		From:    r.id,
+		Term:    r.Term,
+		Index:   r.RaftLog.LastIndex(),
+		Reject:  reject,
+	}
 
+	r.msgs = append(r.msgs, message)
 }
 
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
+	// fmt.Printf("来了一次appendEntries m.commit is %v, entries len is %d\n", m.Commit, len(m.Entries))
+
 	// Your Code Here (2A).
 	if m.Term >= r.Term {
 		r.becomeFollower(m.Term, m.From)
@@ -673,7 +702,12 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 				r.RaftLog.entries = make([]pb.Entry, 0)
 			}
 
-			r.RaftLog.stabled = r.RaftLog.LastIndex()
+			// 添加日志
+			r.RaftLog.entries = append(r.RaftLog.entries, *m.Entries[i])
+
+			// stabled >= committed
+			// leader 新加过来的日志还没有持久化, stabled 由 Ready 进行处理
+			r.RaftLog.stabled = min(r.RaftLog.stabled, prevLogIndex)
 		}
 	}
 
@@ -681,6 +715,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	// 记录下当前追加的最后一个条目的 Index。
 	// 比较 Leader 已知已经提交的最高的日志条目的索引 m.Commit 或者是上一个新条目的索引，然后取两者的最小值
 	r.RaftLog.committed = max(min(m.Commit, r.RaftLog.LastIndex()), r.RaftLog.committed)
+	r.sendAppendEntriesResponse(m.From, false)
 }
 
 // handleHeartbeat handle Heartbeat RPC request
