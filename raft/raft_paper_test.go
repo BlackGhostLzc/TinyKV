@@ -792,6 +792,7 @@ func TestLeaderSyncFollowerLog2AB(t *testing.T) {
 // TestVoteRequest tests that the vote request includes information about the candidate’s log
 // and are sent to all of the other nodes.
 // Reference: section 5.4.1
+// PASS
 func TestVoteRequest2AB(t *testing.T) {
 	tests := []struct {
 		ents  []*pb.Entry
@@ -840,6 +841,7 @@ func TestVoteRequest2AB(t *testing.T) {
 // TestVoter tests the voter denies its vote if its own log is more up-to-date
 // than that of the candidate.
 // Reference: section 5.4.1
+// PASS
 func TestVoter2AB(t *testing.T) {
 	tests := []struct {
 		ents    []pb.Entry
@@ -885,6 +887,7 @@ func TestVoter2AB(t *testing.T) {
 // TestLeaderOnlyCommitsLogFromCurrentTerm tests that only log entries from the leader’s
 // current term are committed by counting replicas.
 // Reference: section 5.4.2
+// PASS
 func TestLeaderOnlyCommitsLogFromCurrentTerm2AB(t *testing.T) {
 	ents := []pb.Entry{{Term: 1, Index: 1}, {Term: 2, Index: 2}}
 	tests := []struct {

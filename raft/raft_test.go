@@ -125,7 +125,6 @@ func TestLeaderCycle2AA(t *testing.T) {
 // newly-elected leader does *not* have the newest (i.e. highest term)
 // log entries, and must overwrite higher-term log entries with
 // lower-term ones.
-// PASS
 func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	cfg := func(c *Config) {
 		c.peers = idsBySize(5)
@@ -189,11 +188,11 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	}
 }
 
-// PASS
 func TestVoteFromAnyState2AA(t *testing.T) {
 	vt := pb.MessageType_MsgRequestVote
 	vt_resp := pb.MessageType_MsgRequestVoteResponse
 	for st := StateType(0); st <= StateLeader; st++ {
+
 		r := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 		r.Term = 1
 
@@ -243,6 +242,7 @@ func TestVoteFromAnyState2AA(t *testing.T) {
 		if r.Term != newTerm {
 			t.Errorf("%s,%s: term %d, want %d", vt, st, r.Term, newTerm)
 		}
+
 		if r.Vote != 2 {
 			t.Errorf("%s,%s: vote %d, want 2", vt, st, r.Vote)
 		}
@@ -376,6 +376,7 @@ func TestCommitWithHeartbeat2AB(t *testing.T) {
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgBeat})
 
 	if sm.RaftLog.committed != 3 {
+		// fmt.Printf("len of log entries is %v\n", len(sm.RaftLog.entries))
 		t.Errorf("committed = %d, want %d", sm.RaftLog.committed, 3)
 	}
 }

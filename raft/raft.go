@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/util"
 	"math/rand"
 	"sort"
 	"time"
@@ -272,7 +273,20 @@ func (r *Raft) sendHeartbeat(to uint64) {
 		To:      to,
 		From:    r.id,
 		Term:    r.Term,
+		Commit:  util.RaftInvalidIndex,
 	}
+	r.msgs = append(r.msgs, message)
+}
+
+func (r *Raft) sendHeartbeatResponse(to uint64) {
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeatResponse,
+		Term:    r.Term,
+		From:    r.id,
+		To:      to,
+		Commit:  r.RaftLog.committed,
+	}
+
 	r.msgs = append(r.msgs, message)
 }
 
@@ -418,6 +432,8 @@ func (r *Raft) stepFollower(m pb.Message) error {
 		r.handleAppendEntries(m)
 	case pb.MessageType_MsgRequestVote:
 		r.handleRequestVote(m)
+	case pb.MessageType_MsgHeartbeat:
+		r.handleHeartbeat(m)
 	}
 	return nil
 }
@@ -433,6 +449,9 @@ func (r *Raft) stepCandidate(m pb.Message) error {
 		r.startElection()
 	case pb.MessageType_MsgRequestVote:
 		r.handleRequestVote(m)
+	case pb.MessageType_MsgHeartbeat:
+		r.handleHeartbeat(m)
+
 	}
 	return nil
 }
@@ -454,6 +473,8 @@ func (r *Raft) stepLeader(m pb.Message) error {
 		r.handlePropose(m)
 	case pb.MessageType_MsgAppendResponse:
 		r.handleAppendEntriesResponse(m)
+	case pb.MessageType_MsgHeartbeatResponse:
+		r.handleHeartbeatResponse(m)
 	case pb.MessageType_MsgHup:
 		// 什么都不要干
 	}
@@ -576,7 +597,21 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 
 	// 其实还要比较日志进行一致性检查 TODO()
 	if r.Vote == None || r.Vote == m.From {
-		// 如果raft没有投票或者投的票指向 m.From
+		lastLogIndex := r.RaftLog.LastIndex()
+		lastLogTerm, _ := r.RaftLog.Term(lastLogIndex)
+
+		if lastLogTerm > m.LogTerm {
+			// 该 raft 的日志更新，拒绝投票
+			r.sendRequestVoteResponse(m.From, true)
+			return
+		}
+		if lastLogTerm == m.LogTerm {
+			if lastLogIndex > m.Index {
+				r.sendRequestVoteResponse(m.From, true)
+				return
+			}
+		}
+
 		r.Vote = m.From
 		r.sendRequestVoteResponse(m.From, false)
 		return
@@ -614,6 +649,7 @@ func (r *Raft) startElection() {
 }
 
 func (r *Raft) handleRequestVoteResponse(m pb.Message) {
+	// fmt.Printf("收到 RequestVoteResponse\n")
 	if m.Term < r.Term {
 		return
 	}
@@ -626,15 +662,30 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 				agreeNum++
 			}
 		}
-
 		// 已经当选leader又一次获得选票时，由于状态的变更所以不会执行stepCandidate，所以也不会再次执行到这里
-		if agreeNum >= (len(r.Prs)+1)/2 {
+		if agreeNum >= len(r.Prs)/2+1 {
 			r.becomeLeader()
 		}
 		return
 	}
 
 	r.votes[m.From] = false
+	if m.Term > r.Term {
+		r.becomeFollower(m.Term, None)
+	}
+
+	// 如果 false 太多了是不是要切换为 follower
+	disagreeNum := 0
+	for _, granted := range r.votes {
+		if granted == false {
+			disagreeNum++
+		}
+	}
+	// 7: dis=4   8:dis=4     9:dis=5
+	if 2*disagreeNum >= len(r.Prs) {
+		r.becomeFollower(r.Term, None)
+	}
+
 }
 
 func (r *Raft) sendAppendEntriesResponse(to uint64, reject bool) {
@@ -721,6 +772,36 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	// 要发送自己的 term, commitIndex,
+	if r.Term <= m.Term {
+		r.Term = m.Term
+		if r.State != StateFollower {
+			r.becomeFollower(r.Term, None)
+		}
+	}
+	// 转换 leader
+	if m.From != r.Lead {
+		r.Lead = m.From
+	}
+	r.electionElapsed = 0
+
+	// fmt.Printf("%v 收到心跳\n", r.id)
+	r.sendHeartbeatResponse(m.From)
+}
+
+func (r *Raft) handleHeartbeatResponse(m pb.Message) {
+	// fmt.Printf("处理%v心跳回复\n", m.From)
+	if r.Term < m.Term {
+		r.Term = m.Term
+		if r.State != StateFollower {
+			r.becomeFollower(r.Term, None)
+		}
+	}
+	// fmt.Printf("心跳回复: raft id is %v, commit is %v\n", m.From, m.Commit)
+	if m.Commit < r.RaftLog.committed {
+		// fmt.Printf("%v的 commit 落后了，需要 sendAppend\n", m.From)
+		r.sendAppend(m.From)
+	}
 }
 
 // handleSnapshot handle Snapshot RPC request
