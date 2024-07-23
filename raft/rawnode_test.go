@@ -165,6 +165,7 @@ func TestRawNodeStart2AC(t *testing.T) {
 	}
 	rawNode.Campaign()
 	rd := rawNode.Ready()
+
 	storage.Append(rd.Entries)
 	rawNode.Advance(rd)
 

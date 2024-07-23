@@ -405,6 +405,8 @@ func (r *Raft) becomeLeader() {
 		}
 	}
 
+	// 小 bug：这里需要判断一下是否需要推进 commitIndex,(有可能只有一个Leader节点)
+	r.maybeUpdateCommitIndex()
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -735,6 +737,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 
 	// 现在可以为 raft 添加日志, 从 index=prevLogIndex + 1开始添加
 	entryLen := len(m.Entries)
+	lastAppend := m.Index
+
 	for i := 0; i < entryLen; i++ {
 		index := m.Entries[i].Index
 		term := m.Entries[i].Term
@@ -744,6 +748,9 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		// 不存在这条日志,那么往后的日志直接append到r.RaftLog中
 		if err1 != nil || index-firstIndex > uint64(len(r.RaftLog.entries)) {
 			r.RaftLog.entries = append(r.RaftLog.entries, *m.Entries[i])
+
+			// 记录一下新添加日志的 index
+			lastAppend = m.Entries[i].Index
 		} else if oldTerm != term {
 			// 后面的日志需要重写
 			// index 如果要小于 firstIndex 那该怎么办
@@ -759,13 +766,21 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 			// stabled >= committed
 			// leader 新加过来的日志还没有持久化, stabled 由 Ready 进行处理
 			r.RaftLog.stabled = min(r.RaftLog.stabled, prevLogIndex)
+
+			lastAppend = m.Entries[i].Index
 		}
+
+		lastAppend = m.Entries[i].Index
 	}
 
 	// 如何更新 commit index ?
 	// 记录下当前追加的最后一个条目的 Index。
 	// 比较 Leader 已知已经提交的最高的日志条目的索引 m.Commit 或者是上一个新条目的索引，然后取两者的最小值
-	r.RaftLog.committed = max(min(m.Commit, r.RaftLog.LastIndex()), r.RaftLog.committed)
+	// 3. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry).
+	// 这里的 index of the last new entry !!!!! 并不等于 r.RaftLog.LastIndex
+	if m.Commit > r.RaftLog.committed {
+		r.RaftLog.committed = max(min(m.Commit, lastAppend), r.RaftLog.committed)
+	}
 	r.sendAppendEntriesResponse(m.From, false)
 }
 

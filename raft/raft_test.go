@@ -55,6 +55,7 @@ func (r *Raft) readMessages() []pb.Message {
 	return msgs
 }
 
+// PASS
 func TestProgressLeader2AB(t *testing.T) {
 	r := newTestRaft(1, []uint64{1, 2}, 5, 1, NewMemoryStorage())
 	r.becomeCandidate()
@@ -72,6 +73,7 @@ func TestProgressLeader2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestLeaderElection2AA(t *testing.T) {
 	var cfg func(*Config)
 	tests := []struct {
@@ -101,6 +103,7 @@ func TestLeaderElection2AA(t *testing.T) {
 // testLeaderCycle verifies that each node in a cluster can campaign
 // and be elected in turn. This ensures that elections work when not
 // starting from a clean slate (as they do in TestLeaderElection)
+// PASS
 func TestLeaderCycle2AA(t *testing.T) {
 	var cfg func(*Config)
 	n := newNetworkWithConfig(cfg, nil, nil, nil)
@@ -125,6 +128,7 @@ func TestLeaderCycle2AA(t *testing.T) {
 // newly-elected leader does *not* have the newest (i.e. highest term)
 // log entries, and must overwrite higher-term log entries with
 // lower-term ones.
+// PASS
 func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	cfg := func(c *Config) {
 		c.peers = idsBySize(5)
@@ -188,6 +192,7 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestVoteFromAnyState2AA(t *testing.T) {
 	vt := pb.MessageType_MsgRequestVote
 	vt_resp := pb.MessageType_MsgRequestVoteResponse
@@ -249,6 +254,7 @@ func TestVoteFromAnyState2AA(t *testing.T) {
 	}
 }
 
+// PASS
 func TestLogReplication2AB(t *testing.T) {
 	tests := []struct {
 		*network
@@ -308,6 +314,7 @@ func TestLogReplication2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestSingleNodeCommit2AB(t *testing.T) {
 	tt := newNetwork(nil)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -322,6 +329,7 @@ func TestSingleNodeCommit2AB(t *testing.T) {
 
 // TestCommitWithoutNewTermEntry tests the entries could be committed
 // when leader changes with noop entry and no new proposal comes in.
+// PASS
 func TestCommitWithoutNewTermEntry2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil, nil, nil)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -355,6 +363,7 @@ func TestCommitWithoutNewTermEntry2AB(t *testing.T) {
 // TestCommitWithHeartbeat tests leader can send log
 // to follower when it received a heartbeat response
 // which indicate it doesn't have update-to-date log
+// PASS
 func TestCommitWithHeartbeat2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil, nil, nil)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -381,6 +390,7 @@ func TestCommitWithHeartbeat2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestDuelingCandidates2AB(t *testing.T) {
 	a := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 	b := newTestRaft(2, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
@@ -443,6 +453,7 @@ func TestDuelingCandidates2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestCandidateConcede2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
 	tt.isolate(1)
@@ -483,6 +494,7 @@ func TestCandidateConcede2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestSingleNodeCandidate2AA(t *testing.T) {
 	tt := newNetwork(nil)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -493,6 +505,7 @@ func TestSingleNodeCandidate2AA(t *testing.T) {
 	}
 }
 
+// PASS
 func TestOldMessages2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
 	// make 0 leader @ term 3
@@ -524,6 +537,7 @@ func TestOldMessages2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestProposal2AB(t *testing.T) {
 	tests := []struct {
 		*network
@@ -569,6 +583,8 @@ func TestProposal2AB(t *testing.T) {
 //  2. If an existing entry conflicts with a new one (same index but different terms),
 //     delete the existing entry and all that follow it; append any new entries not already in the log.
 //  3. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry).
+//
+// PASS
 func TestHandleMessageType_MsgAppend2AB(t *testing.T) {
 	tests := []struct {
 		m       pb.Message
@@ -617,6 +633,7 @@ func TestHandleMessageType_MsgAppend2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestRecvMessageType_MsgRequestVote2AB(t *testing.T) {
 	msgType := pb.MessageType_MsgRequestVote
 	msgRespType := pb.MessageType_MsgRequestVoteResponse
@@ -696,6 +713,7 @@ func TestRecvMessageType_MsgRequestVote2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestAllServerStepdown2AB(t *testing.T) {
 	tests := []struct {
 		state StateType
@@ -750,6 +768,7 @@ func TestAllServerStepdown2AB(t *testing.T) {
 	}
 }
 
+// PASS
 func TestCandidateResetTermMessageType_MsgHeartbeat2AA(t *testing.T) {
 	testCandidateResetTerm(t, pb.MessageType_MsgHeartbeat)
 }
@@ -761,6 +780,7 @@ func TestCandidateResetTermMessageType_MsgAppend2AA(t *testing.T) {
 // testCandidateResetTerm tests when a candidate receives a
 // MessageType_MsgHeartbeat or MessageType_MsgAppend from leader, "Step" resets the term
 // with leader's and reverts back to follower.
+// PASS
 func testCandidateResetTerm(t *testing.T, mt pb.MessageType) {
 	a := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 	b := newTestRaft(2, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
@@ -817,6 +837,7 @@ func testCandidateResetTerm(t *testing.T, mt pb.MessageType) {
 // to become a candidate with an increased term. Then, the
 // candiate's response to late leader heartbeat forces the leader
 // to step down.
+// PASS
 func TestDisruptiveFollower2AA(t *testing.T) {
 	n1 := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 	n2 := newTestRaft(2, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
@@ -904,6 +925,7 @@ func TestDisruptiveFollower2AA(t *testing.T) {
 	}
 }
 
+// PASS
 func TestHeartbeatUpdateCommit2AB(t *testing.T) {
 	tests := []struct {
 		failCnt    int
@@ -950,6 +972,7 @@ func TestHeartbeatUpdateCommit2AB(t *testing.T) {
 }
 
 // tests the output of the state machine when receiving MessageType_MsgBeat
+// PASS
 func TestRecvMessageType_MsgBeat2AA(t *testing.T) {
 	tests := []struct {
 		state StateType
@@ -980,6 +1003,7 @@ func TestRecvMessageType_MsgBeat2AA(t *testing.T) {
 	}
 }
 
+// PASS
 func TestLeaderIncreaseNext2AB(t *testing.T) {
 	previousEnts := []pb.Entry{{Term: 1, Index: 1}, {Term: 1, Index: 2}, {Term: 1, Index: 3}}
 	// previous entries + noop entry + propose + 1
