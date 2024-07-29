@@ -308,7 +308,41 @@ func ClearMeta(engines *engine_util.Engines, kvWB, raftWB *engine_util.WriteBatc
 // never be committed
 func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.WriteBatch) error {
 	// Your Code Here (2B).
-	return nil
+	// 把需要持久化的 entry 放入到 raftWB 中，还需要删除一些被覆盖的日志
+
+	if len(entries) == 0 {
+		return nil
+	}
+	var err error = nil
+
+	newfirstIndex := entries[0].Index
+	newlastIndex := entries[len(entries)-1].Index
+
+	psfirstIndex, _ := ps.FirstIndex()
+	pslastIndex, _ := ps.LastIndex()
+
+	if newlastIndex < psfirstIndex {
+		return nil
+	}
+
+	if newfirstIndex < psfirstIndex {
+		entries = entries[psfirstIndex-newfirstIndex:]
+	}
+
+	// delete 永远不会提交的日志
+	// RaftLog      firstIndex                   lastIndex
+	// newEntrie                entries[0].Index                  entries[n-1].Index
+	// [entries[0].Index, lastIndex] 需要删除
+	for i := newfirstIndex + 1; i <= pslastIndex; i++ {
+		raftWB.DeleteMeta(meta.RaftLogKey(ps.region.Id, i))
+	}
+
+	// set 新的日志
+	for _, entry := range entries {
+		err = raftWB.SetMeta(meta.RaftLogKey(ps.region.Id, entry.Index), &entry)
+	}
+
+	return err
 }
 
 // Apply the peer with given snapshot
@@ -331,7 +365,37 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, error) {
 	// Hint: you may call `Append()` and `ApplySnapshot()` in this function
 	// Your Code Here (2B/2C).
-	return nil, nil
+
+	// 什么东西需要持久化 save
+	// 1. 需要持久化的日志 ready.
+	// 2. softstate 和 hardstate 写入 raftKV
+	// 3. snapshot
+	raftWB := new(engine_util.WriteBatch)
+
+	if len(ready.Entries) != 0 {
+		newLastIndex := ready.Entries[len(ready.Entries)-1].Index
+		newLastTerm := ready.Entries[len(ready.Entries)-1].Term
+		if newLastIndex > ps.raftState.LastIndex {
+			ps.raftState.LastIndex = newLastIndex
+			ps.raftState.LastTerm = newLastTerm
+		}
+	}
+	if !raft.IsEmptyHardState(ready.HardState) {
+		ps.raftState.HardState = &ready.HardState // term vote commit需要持久化
+		// ps.applyState 这个现在先别持久，这个需要按照 commited entries 一步步写入
+	}
+
+	err := ps.Append(ready.Entries, raftWB)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 这里需要写入，在 HasReady()中只把 RawNode 的状态更改了一下，并没有实现持久化
+	err = raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState)
+
+	err = raftWB.WriteToDB(ps.Engines.Raft)
+	return nil, err
 }
 
 func (ps *PeerStorage) ClearData() {

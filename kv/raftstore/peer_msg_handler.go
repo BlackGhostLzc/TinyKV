@@ -2,6 +2,9 @@ package raftstore
 
 import (
 	"fmt"
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
+	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
+	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"time"
 
 	"github.com/Connor1996/badger/y"
@@ -38,11 +41,153 @@ func newPeerMsgHandler(peer *peer, ctx *GlobalContext) *peerMsgHandler {
 	}
 }
 
+// 这个函数就是把 entry 中的数据放入 writebatch 中
+func (d *peerMsgHandler) execNormalEntry(entry *eraftpb.Entry, kvWB *engine_util.WriteBatch) {
+	// 1 个 entry 是一条 raftrequestcmd
+	msg := &raft_cmdpb.RaftCmdRequest{}
+	err := msg.Unmarshal(entry.Data)
+	if err != nil {
+		panic(err)
+	}
+
+	if msg.AdminRequest != nil {
+		// 处理 Admin 的request TODO()
+		return
+	}
+
+	// 还需要记录 response
+	resp := &raft_cmdpb.RaftCmdResponse{Header: &raft_cmdpb.RaftResponseHeader{}}
+
+	// 已经检查过 key 在这个 region 内，直接处理即可
+	for _, request := range msg.Requests {
+		switch request.CmdType {
+		case raft_cmdpb.CmdType_Get:
+			d.execGet(entry, request, resp)
+		case raft_cmdpb.CmdType_Delete:
+			d.execDelete(entry, request, kvWB, resp)
+		case raft_cmdpb.CmdType_Put:
+			d.execPut(entry, request, kvWB, resp)
+		case raft_cmdpb.CmdType_Snap: // TODO()
+		}
+	}
+	// 调用 callback
+	d.processProposal(entry, resp)
+}
+
+func (d *peerMsgHandler) execGet(entry *eraftpb.Entry, req *raft_cmdpb.Request, resp *raft_cmdpb.RaftCmdResponse) {
+	// 执行
+	value, _ := engine_util.GetCF(d.peerStorage.Engines.Kv, req.Get.Cf, req.Get.Key)
+
+	// 回应
+	r := &raft_cmdpb.Response{
+		CmdType: raft_cmdpb.CmdType_Get,
+		Get: &raft_cmdpb.GetResponse{
+			Value: value,
+		},
+	}
+
+	resp.Responses = append(resp.Responses, r)
+}
+
+func (d *peerMsgHandler) execDelete(entry *eraftpb.Entry, req *raft_cmdpb.Request, kvWB *engine_util.WriteBatch, resp *raft_cmdpb.RaftCmdResponse) {
+	// 执行
+	kvWB.DeleteCF(req.Delete.Cf, req.Delete.Key)
+
+	// 回应
+	r := &raft_cmdpb.Response{
+		CmdType: raft_cmdpb.CmdType_Delete,
+		Delete:  &raft_cmdpb.DeleteResponse{},
+	}
+
+	resp.Responses = append(resp.Responses, r)
+}
+
+func (d *peerMsgHandler) execPut(entry *eraftpb.Entry, req *raft_cmdpb.Request, kvWB *engine_util.WriteBatch, resp *raft_cmdpb.RaftCmdResponse) {
+	// 执行
+	kvWB.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
+
+	// 回应
+	r := &raft_cmdpb.Response{
+		CmdType: raft_cmdpb.CmdType_Put,
+		Put:     &raft_cmdpb.PutResponse{},
+	}
+
+	resp.Responses = append(resp.Responses, r)
+}
+
+func (d *peerMsgHandler) processProposal(entry *eraftpb.Entry, resp *raft_cmdpb.RaftCmdResponse) {
+	proLen := len(d.proposals)
+	if proLen == 0 {
+		log.Panic()
+	}
+
+	i := 0
+	for i = 0; i < proLen; i++ {
+		p := d.proposals[i]
+		if p.index < entry.Index {
+			p.cb.Done(ErrRespStaleCommand(p.term))
+			continue
+		}
+
+		if p.index == entry.Index && p.term == entry.Term {
+			p.cb.Done(resp)
+			break
+		}
+	}
+
+	d.proposals = d.proposals[i+1:]
+}
+
 func (d *peerMsgHandler) HandleRaftReady() {
 	if d.stopped {
 		return
 	}
 	// Your Code Here (2B).
+	if !d.RaftGroup.HasReady() {
+		return
+	}
+	rd := d.RaftGroup.Ready()
+
+	// 向其他 raft 发送 onRaftMsg
+	if len(rd.Messages) > 0 {
+		d.Send(d.ctx.trans, rd.Messages)
+	}
+
+	// 更新 ready state: 主要是写入待持久化的日志
+	_, err := d.peerStorage.SaveReadyState(&rd)
+	if err != nil {
+		return
+	}
+
+	// 把 commited entries 写入状态机, 应该写进 kvDB 中
+	for _, entry := range rd.CommittedEntries {
+		kvWB := new(engine_util.WriteBatch)
+
+		if entry.EntryType == eraftpb.EntryType_EntryConfChange {
+			// d.execEntryConfChange(&entry, kvWB) TODO()
+		} else {
+			d.execNormalEntry(&entry, kvWB)
+		}
+		// 停了就直接退出
+		if d.stopped {
+			return
+		}
+
+		// appiledIndex 需要持久化
+		d.peerStorage.applyState.AppliedIndex = entry.Index
+		err := kvWB.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+		if err != nil {
+			log.Panic(err)
+		}
+
+		err = kvWB.WriteToDB(d.peerStorage.Engines.Kv)
+		if err != nil {
+			log.Panic(err)
+		}
+	}
+
+	// 推进状态机
+	d.RaftGroup.Advance(rd)
 }
 
 func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
@@ -107,6 +252,7 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 	return err
 }
 
+// 将 client 的请求包装成 entry 传递给 raft 层
 func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
 	err := d.preProposeRaftCommand(msg)
 	if err != nil {
@@ -114,6 +260,52 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		return
 	}
 	// Your Code Here (2B).
+	if msg.AdminRequest != nil {
+		d.proposeAdminRequest(msg, cb)
+	} else {
+		d.proposeNormalRequest(msg, cb)
+	}
+}
+
+func (d *peerMsgHandler) proposeAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+
+}
+
+func (d *peerMsgHandler) proposeNormalRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+	// 先遍历一遍 key 是否在这个region中
+	for _, req := range msg.Requests {
+		var key []byte
+		switch req.CmdType {
+		case raft_cmdpb.CmdType_Get:
+			key = req.Get.Key
+		case raft_cmdpb.CmdType_Put:
+			key = req.Put.Key
+		case raft_cmdpb.CmdType_Delete:
+			key = req.Delete.Key
+		}
+
+		if key == nil {
+			continue
+		}
+		// 在 reader 中有一个 CmdType_Snap 的命令, 仅需要获取 regionID 作为快照
+		err := util.CheckKeyInRegion(key, d.Region())
+		if err != nil && req.CmdType != raft_cmdpb.CmdType_Snap {
+			log.Info("key's region is not in this region")
+			cb.Done(ErrResp(err))
+			return
+		}
+	}
+
+	// 然后再打包成一个 proposal
+	p := &proposal{index: d.nextProposalIndex(), term: d.Term(), cb: cb}
+	d.proposals = append(d.proposals, p)
+
+	data, err1 := msg.Marshal()
+	if err1 != nil {
+		panic(err1)
+	}
+
+	d.RaftGroup.Propose(data)
 }
 
 func (d *peerMsgHandler) onTick() {
@@ -223,9 +415,9 @@ func (d *peerMsgHandler) validateRaftMessage(msg *rspb.RaftMessage) bool {
 	return true
 }
 
-/// Checks if the message is sent to the correct peer.
-///
-/// Returns true means that the message can be dropped silently.
+// / Checks if the message is sent to the correct peer.
+// /
+// / Returns true means that the message can be dropped silently.
 func (d *peerMsgHandler) checkMessage(msg *rspb.RaftMessage) bool {
 	fromEpoch := msg.GetRegionEpoch()
 	isVoteMsg := util.IsVoteMessage(msg.Message)
