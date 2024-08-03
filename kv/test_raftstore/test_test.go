@@ -208,6 +208,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					key := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 					value := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j) + " y"
 					// log.Infof("%d: client new put %v,%v\n", cli, key, value)
+					// fmt.Printf("%d: client new put %v,%v\n", cli, []byte(key), []byte(value))
 					cluster.MustPut([]byte(key), []byte(value))
 					last = NextValue(last, value)
 					j++
@@ -215,6 +216,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					start := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", 0)
 					end := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 					// log.Infof("%d: client new scan %v-%v\n", cli, start, end)
+					// fmt.Printf("%d: client new scan %v-%v\n", cli, start, end)
 					values := cluster.Scan([]byte(start), []byte(end))
 					v := string(bytes.Join(values, []byte("")))
 					if v != last {
@@ -329,16 +331,19 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 	}
 }
 
+// PASS
 func TestBasic2B(t *testing.T) {
 	// Test: one client (2B) ...
 	GenericTest(t, "2B", 1, false, false, false, -1, false, false)
 }
 
+// PASS
 func TestConcurrent2B(t *testing.T) {
 	// Test: many clients (2B) ...
 	GenericTest(t, "2B", 5, false, false, false, -1, false, false)
 }
 
+// PASS
 func TestUnreliable2B(t *testing.T) {
 	// Test: unreliable net, many clients (2B) ...
 	GenericTest(t, "2B", 5, true, false, false, -1, false, false)

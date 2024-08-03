@@ -307,6 +307,7 @@ func (c *Cluster) MustPutCF(cf string, key, value []byte) {
 		panic(resp.Header.Error)
 	}
 	if len(resp.Responses) != 1 {
+		fmt.Printf("%d\n", len(resp.Responses))
 		panic("len(resp.Responses) != 1")
 	}
 	if resp.Responses[0].CmdType != raft_cmdpb.CmdType_Put {
@@ -362,6 +363,7 @@ func (c *Cluster) Scan(start, end []byte) [][]byte {
 	req := NewSnapCmd()
 	values := make([][]byte, 0)
 	key := start
+	// fmt.Printf("Scan: start is %v, end is %v\n", start, end)
 	for (len(end) != 0 && bytes.Compare(key, end) < 0) || (len(key) == 0 && len(end) == 0) {
 		resp, txn := c.Request(key, []*raft_cmdpb.Request{req}, 5*time.Second)
 		if resp.Header.Error != nil {
@@ -374,7 +376,9 @@ func (c *Cluster) Scan(start, end []byte) [][]byte {
 			panic("resp.Responses[0].CmdType != raft_cmdpb.CmdType_Snap")
 		}
 		region := resp.Responses[0].GetSnap().Region
+		// fmt.Printf("region is %v\n\n", region)
 		iter := raft_storage.NewRegionReader(txn, *region).IterCF(engine_util.CfDefault)
+		// fmt.Printf("获取到了iter\n\n")
 		for iter.Seek(key); iter.Valid(); iter.Next() {
 			if engine_util.ExceedEndKey(iter.Item().Key(), end) {
 				break

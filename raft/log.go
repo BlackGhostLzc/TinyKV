@@ -122,13 +122,12 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
 	// snapshot/first.....applied....committed....stabled.....last
+	firstIndex, _ := l.storage.FirstIndex()
+	appliedIndex := l.applied
+	commitedIndex := l.committed
 	if len(l.entries) > 0 {
-		firstIndex, _ := l.storage.FirstIndex()
-		if l.committed == l.applied {
-			return make([]pb.Entry, 0)
-		}
-		if l.applied >= firstIndex-1 {
-			return l.entries[l.applied-firstIndex+1 : l.committed-firstIndex+1]
+		if appliedIndex >= firstIndex-1 && commitedIndex >= firstIndex-1 && appliedIndex < commitedIndex && commitedIndex <= l.LastIndex() {
+			return l.entries[appliedIndex-firstIndex+1 : commitedIndex-firstIndex+1]
 		}
 	}
 	return make([]pb.Entry, 0)

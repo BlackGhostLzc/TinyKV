@@ -160,6 +160,7 @@ func (rn *RawNode) Ready() Ready {
 		CommittedEntries: rn.Raft.RaftLog.nextEnts(),
 		Messages:         rn.Raft.msgs,
 	}
+	// fmt.Printf("In Ready(), Messages's len is %d\n", len(rn.Raft.msgs))
 
 	// 还有 hardState, softState需要设置一下
 	prevSoftSt := rn.prevSoftSt
@@ -185,6 +186,7 @@ func (rn *RawNode) HasReady() bool {
 	// 4. hardstate有变化
 	// 5. softstate有变化
 	// 6. 有需要的 snapshot
+	// fmt.Printf("msgs长度为%d\n", len(rn.Raft.msgs))
 	if len(rn.Raft.msgs) > 0 || len(rn.Raft.RaftLog.unstableEntries()) > 0 ||
 		len(rn.Raft.RaftLog.nextEnts()) > 0 {
 		return true

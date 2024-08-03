@@ -59,6 +59,7 @@ func (d *peerMsgHandler) execNormalEntry(entry *eraftpb.Entry, kvWB *engine_util
 	resp := &raft_cmdpb.RaftCmdResponse{Header: &raft_cmdpb.RaftResponseHeader{}}
 
 	// 已经检查过 key 在这个 region 内，直接处理即可
+	isExecSnap := false
 	for _, request := range msg.Requests {
 		switch request.CmdType {
 		case raft_cmdpb.CmdType_Get:
@@ -67,11 +68,13 @@ func (d *peerMsgHandler) execNormalEntry(entry *eraftpb.Entry, kvWB *engine_util
 			d.execDelete(entry, request, kvWB, resp)
 		case raft_cmdpb.CmdType_Put:
 			d.execPut(entry, request, kvWB, resp)
-		case raft_cmdpb.CmdType_Snap: // TODO()
+		case raft_cmdpb.CmdType_Snap:
+			isExecSnap = true
+			d.execSnap(entry, request, resp)
 		}
 	}
 	// 调用 callback
-	d.processProposal(entry, resp)
+	d.processProposal(entry, resp, isExecSnap)
 }
 
 func (d *peerMsgHandler) execGet(entry *eraftpb.Entry, req *raft_cmdpb.Request, resp *raft_cmdpb.RaftCmdResponse) {
@@ -104,6 +107,7 @@ func (d *peerMsgHandler) execDelete(entry *eraftpb.Entry, req *raft_cmdpb.Reques
 
 func (d *peerMsgHandler) execPut(entry *eraftpb.Entry, req *raft_cmdpb.Request, kvWB *engine_util.WriteBatch, resp *raft_cmdpb.RaftCmdResponse) {
 	// 执行
+	// fmt.Printf("execPut: CF is %v\n", req.Put.Cf)
 	kvWB.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
 
 	// 回应
@@ -115,27 +119,43 @@ func (d *peerMsgHandler) execPut(entry *eraftpb.Entry, req *raft_cmdpb.Request, 
 	resp.Responses = append(resp.Responses, r)
 }
 
-func (d *peerMsgHandler) processProposal(entry *eraftpb.Entry, resp *raft_cmdpb.RaftCmdResponse) {
-	proLen := len(d.proposals)
-	if proLen == 0 {
-		log.Panic()
+func (d *peerMsgHandler) execSnap(entry *eraftpb.Entry, req *raft_cmdpb.Request, resp *raft_cmdpb.RaftCmdResponse) {
+
+	// 回应
+	r := &raft_cmdpb.Response{
+		CmdType: raft_cmdpb.CmdType_Snap,
+		Snap: &raft_cmdpb.SnapResponse{
+			Region: d.Region(),
+		},
 	}
+
+	resp.Responses = append(resp.Responses, r)
+}
+
+func (d *peerMsgHandler) processProposal(entry *eraftpb.Entry, resp *raft_cmdpb.RaftCmdResponse, isExecSnap bool) {
+	proLen := len(d.proposals)
 
 	i := 0
 	for i = 0; i < proLen; i++ {
 		p := d.proposals[i]
 		if p.index < entry.Index {
+			// fmt.Printf("发送一个ErrResp....\n")
 			p.cb.Done(ErrRespStaleCommand(p.term))
 			continue
 		}
 
 		if p.index == entry.Index && p.term == entry.Term {
+			if isExecSnap {
+				p.cb.Txn = d.peerStorage.Engines.Kv.NewTransaction(false)
+			}
 			p.cb.Done(resp)
 			break
 		}
 	}
 
-	d.proposals = d.proposals[i+1:]
+	if i < proLen {
+		d.proposals = d.proposals[i+1:]
+	}
 }
 
 func (d *peerMsgHandler) HandleRaftReady() {
@@ -143,13 +163,15 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		return
 	}
 	// Your Code Here (2B).
-	if !d.RaftGroup.HasReady() {
+
+	if d.RaftGroup.HasReady() == false {
 		return
 	}
 	rd := d.RaftGroup.Ready()
 
 	// 向其他 raft 发送 onRaftMsg
 	if len(rd.Messages) > 0 {
+		// fmt.Printf("HandleRaftReady: 发送 onRaftMsgs\n")
 		d.Send(d.ctx.trans, rd.Messages)
 	}
 
@@ -181,6 +203,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		}
 
 		err = kvWB.WriteToDB(d.peerStorage.Engines.Kv)
+
 		if err != nil {
 			log.Panic(err)
 		}

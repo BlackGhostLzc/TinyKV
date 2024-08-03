@@ -170,7 +170,7 @@ func newRaft(c *Config) *Raft {
 	}
 
 	// Your Code Here (2A).
-	hardState, _, err := c.Storage.InitialState()
+	hardState, confState, err := c.Storage.InitialState()
 	if err != nil {
 		panic("newRaft failed: hardState error")
 	}
@@ -179,6 +179,11 @@ func newRaft(c *Config) *Raft {
 
 	// map[uint64]*Progress
 	prs := make(map[uint64]*Progress)
+
+	if len(c.peers) == 0 {
+		c.peers = confState.Nodes
+	}
+
 	// 从 peers []uint64 构造这个 prs
 	for _, peer := range c.peers {
 		// 这里一开始先为 0, 到后面变成Leader后， Match = 0, Next = lastIndex + 1
@@ -381,6 +386,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	// fmt.Printf("[%d] 成为了 Leader, term %d\n", r.id, r.Term)
 	r.State = StateLeader
 	r.heartbeatElapsed = 0
 	r.Lead = r.id
@@ -583,9 +589,13 @@ func (r *Raft) sendRequestVote(to uint64) {
 		LogTerm: logTerm, // prevLogTerm
 	}
 	r.msgs = append(r.msgs, message)
+
+	// fmt.Printf("sendRequestVote: msg的长度%d\n", len(r.msgs))
 }
 
 func (r *Raft) handleRequestVote(m pb.Message) {
+	// fmt.Printf("收到 RequestVote, %d -> %d \n", m.From, m.To)
+
 	// 自己的 term 大于选举者的 term
 	if r.Term > m.Term {
 		r.sendRequestVoteResponse(m.From, true)
@@ -635,6 +645,9 @@ func (r *Raft) sendRequestVoteResponse(to uint64, reject bool) {
 
 func (r *Raft) startElection() {
 	// 如果集群中只有一个节点，那么需要特殊处理，否则永远不会执行handleRequestVote函数，也就不会成为leader
+
+	// fmt.Printf("[%d], term %d, 发动了一次选举\n", r.id, r.Term)
+
 	if len(r.Prs) == 1 {
 		r.becomeCandidate()
 		r.becomeLeader()
@@ -643,15 +656,17 @@ func (r *Raft) startElection() {
 	r.becomeCandidate()
 
 	// 向每一个 raft 发送
+	// fmt.Printf("raft[%d]'s Prs is %v\n", r.id, r.Prs)
 	for p := range r.Prs {
 		if p != r.id {
+			// fmt.Printf("[%d]向[%d], term %d, 索要一次投票\n", r.id, p, r.Term)
 			r.sendRequestVote(p)
 		}
 	}
 }
 
 func (r *Raft) handleRequestVoteResponse(m pb.Message) {
-	// fmt.Printf("收到 RequestVoteResponse\n")
+	// fmt.Printf("收到 RequestVoteResponse, %d -> %d  reject=%v\n", m.From, m.To, m.Reject)
 	if m.Term < r.Term {
 		return
 	}

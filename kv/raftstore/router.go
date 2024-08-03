@@ -100,5 +100,6 @@ func (r *RaftstoreRouter) SendRaftCommand(req *raft_cmdpb.RaftCmdRequest, cb *me
 		Callback: cb,
 	}
 	regionID := req.Header.RegionId
+
 	return r.router.send(regionID, message.NewPeerMsg(message.MsgTypeRaftCmd, regionID, cmd))
 }
