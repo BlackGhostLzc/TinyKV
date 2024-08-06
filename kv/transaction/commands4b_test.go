@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// PASS
 // TestGetValue4B getting a value works in the simple case.
 func TestGetValue4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -21,12 +22,12 @@ func TestGetValue4B(t *testing.T) {
 	req.Key = []byte{99}
 	req.Version = mvcc.TsMax
 	resp := builder.runOneRequest(&req).(*kvrpcpb.GetResponse)
-
 	assert.Nil(t, resp.RegionError)
 	assert.Nil(t, resp.Error)
 	assert.Equal(t, []byte{42}, resp.Value)
 }
 
+// PASS
 // TestGetValueTs4B getting a value works with different timestamps.
 func TestGetValueTs4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -60,6 +61,7 @@ func TestGetValueTs4B(t *testing.T) {
 	assert.Equal(t, []byte{42}, resp2.Value)
 }
 
+// PASS
 // TestGetEmpty4B tests that get on an empty DB.
 func TestGetEmpty4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -74,6 +76,7 @@ func TestGetEmpty4B(t *testing.T) {
 	assert.True(t, resp.NotFound)
 }
 
+// PASS
 // TestGetNone4B tests that getting a missing key works.
 func TestGetNone4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -94,6 +97,7 @@ func TestGetNone4B(t *testing.T) {
 	assert.True(t, resp.NotFound)
 }
 
+// PASS
 // TestGetVersions4B tests we get the correct value when there are multiple versions.
 func TestGetVersions4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -153,6 +157,7 @@ func TestGetVersions4B(t *testing.T) {
 	assert.Equal(t, []byte{43}, resp5.Value)
 }
 
+// PASS
 // TestGetDeleted4B tests we get the correct value when there are multiple versions, including a deletion.
 func TestGetDeleted4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -212,6 +217,7 @@ func TestGetDeleted4B(t *testing.T) {
 	assert.Equal(t, []byte{44}, resp5.Value)
 }
 
+// PASS
 // TestGetLocked4B tests getting a value when it is locked by another transaction.
 func TestGetLocked4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -243,6 +249,7 @@ func TestGetLocked4B(t *testing.T) {
 	assert.Equal(t, uint64(200), lockInfo.LockVersion)
 }
 
+// PASS
 // TestEmptyPrewrite4B tests that a Prewrite with no mutations succeeds and changes nothing.
 func TestEmptyPrewrite4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -254,6 +261,7 @@ func TestEmptyPrewrite4B(t *testing.T) {
 	builder.assertLen(engine_util.CfDefault, 0)
 }
 
+// PASS
 // TestSinglePrewrite4B tests a prewrite with one write, it should succeed, we test all the expected values.
 func TestSinglePrewrite4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -270,6 +278,7 @@ func TestSinglePrewrite4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestPrewriteLocked4B tests that two prewrites to the same key causes a lock error.
 func TestPrewriteLocked4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -288,6 +297,7 @@ func TestPrewriteLocked4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestPrewriteWritten4B tests an attempted prewrite with a write conflict.
 func TestPrewriteWritten4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -308,6 +318,7 @@ func TestPrewriteWritten4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestPrewriteWrittenNoConflict4B tests an attempted prewrite with a write already present, but no conflict.
 func TestPrewriteWrittenNoConflict4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -330,6 +341,7 @@ func TestPrewriteWrittenNoConflict4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestMultiplePrewrites4B tests that multiple prewrites to different keys succeeds.
 func TestMultiplePrewrites4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -351,6 +363,7 @@ func TestMultiplePrewrites4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestPrewriteOverwrite4B tests that two writes in the same prewrite succeed and we see the second write.
 func TestPrewriteOverwrite4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -367,6 +380,7 @@ func TestPrewriteOverwrite4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestPrewriteMultiple4B tests that a prewrite with multiple mutations succeeds.
 func TestPrewriteMultiple4B(t *testing.T) {
 	builder := newBuilder(t)

@@ -59,15 +59,14 @@ func (txn *MvccTxn) PutWrite(key []byte, ts uint64, write *Write) {
 func (txn *MvccTxn) GetLock(key []byte) (*Lock, error) {
 	// Your Code Here (4A).
 	reader := txn.Reader
-	lockByte, err := reader.GetCF(engine_util.CfLock, key)
+	value, err := reader.GetCF(engine_util.CfLock, key)
 	if err != nil {
 		return nil, err
 	}
-	lock, err := ParseLock(lockByte)
+	lock, err := ParseLock(value)
 	if err != nil || lock == nil {
 		return nil, nil
 	}
-
 	return lock, err
 }
 
@@ -107,6 +106,7 @@ func (txn *MvccTxn) GetValue(key []byte) ([]byte, error) {
 
 	reader := txn.Reader
 	iter := reader.IterCF(engine_util.CfWrite)
+	defer iter.Close()
 	// 找到commitTs <= txn.StartTs 的最新 Write (提交)   EncodeKey中时间戳是按倒序放置的
 	iter.Seek(EncodeKey(key, txn.StartTS))
 	if !iter.Valid() {
@@ -176,6 +176,7 @@ func (txn *MvccTxn) CurrentWrite(key []byte) (*Write, uint64, error) {
 	// Your Code Here (4A).
 	reader := txn.Reader
 	iter := reader.IterCF(engine_util.CfWrite)
+	defer iter.Close()
 
 	for iter.Seek(EncodeKey(key, TsMax)); iter.Valid(); iter.Next() {
 		item := iter.Item()
@@ -212,6 +213,7 @@ func (txn *MvccTxn) MostRecentWrite(key []byte) (*Write, uint64, error) {
 	// 只需要找到最近的一次 write 写入，直接 seek 再判断一下迭代器是否有效即可
 	reader := txn.Reader
 	iter := reader.IterCF(engine_util.CfWrite)
+	defer iter.Close()
 	iter.Seek(EncodeKey(key, TsMax))
 	if !iter.Valid() {
 		return nil, 0, nil
