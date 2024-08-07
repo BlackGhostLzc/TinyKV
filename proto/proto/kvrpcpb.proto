@@ -65,7 +65,7 @@ message RawScanResponse {
 
 // Transactional commands.
 // Note that "version" and "timestamp" are synonymous.
-
+// version 和 时间戳是一致的
 // Read the value of a key at the given time.
 message GetRequest {
     Context context = 1;

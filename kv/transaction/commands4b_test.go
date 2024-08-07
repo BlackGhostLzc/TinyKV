@@ -403,6 +403,7 @@ func TestPrewriteMultiple4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestEmptyCommit4B tests a commit request with no keys to commit.
 func TestEmptyCommit4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -414,6 +415,7 @@ func TestEmptyCommit4B(t *testing.T) {
 	builder.assertLens(0, 0, 0)
 }
 
+// PASS
 // TestSimpleCommit4B tests committing a single key.
 func TestSingleCommit4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -433,6 +435,7 @@ func TestSingleCommit4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCommitOverwrite4B tests committing where there is already a write.
 func TestCommitOverwrite4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -457,6 +460,7 @@ func TestCommitOverwrite4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCommitMultipleKeys4B tests committing multiple keys in the same commit. Also puts some other data in the DB and test
 // that it is unchanged.
 func TestCommitMultipleKeys4B(t *testing.T) {
@@ -508,6 +512,7 @@ func TestCommitMultipleKeys4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestRecommitKey4B tests committing the same key multiple times in one commit.
 func TestRecommitKey4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -528,6 +533,7 @@ func TestRecommitKey4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCommitConflictRollback4B tests committing a rolled back transaction.
 func TestCommitConflictRollback4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -545,6 +551,7 @@ func TestCommitConflictRollback4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCommitConflictRace4B tests committing where a key is pre-written by a different transaction.
 func TestCommitConflictRace4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -564,6 +571,7 @@ func TestCommitConflictRace4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCommitConflictRepeat4B tests recommitting a transaction (i.e., the same commit request is received twice).
 func TestCommitConflictRepeat4B(t *testing.T) {
 	builder := newBuilder(t)
@@ -583,6 +591,7 @@ func TestCommitConflictRepeat4B(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCommitMissingPrewrite4a tests committing a transaction which was not prewritten (i.e., a request was lost, but
 // the commit request was not).
 func TestCommitMissingPrewrite4a(t *testing.T) {
