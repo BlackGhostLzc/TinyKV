@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// PASS
 // TestEmptyRollback4C tests a rollback with no keys.
 func TestEmptyRollback4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -20,6 +21,7 @@ func TestEmptyRollback4C(t *testing.T) {
 	builder.assertLens(0, 0, 0)
 }
 
+// PASS
 // TestRollback4C tests a successful rollback.
 func TestRollback4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -40,6 +42,7 @@ func TestRollback4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestRollbackDuplicateKeys4C tests a rollback which rolls back multiple keys, including one duplicated key.
 func TestRollbackDuplicateKeys4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -62,6 +65,7 @@ func TestRollbackDuplicateKeys4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestRollbackMissingPrewrite4C tests trying to roll back a missing prewrite.
 func TestRollbackMissingPrewrite4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -76,6 +80,7 @@ func TestRollbackMissingPrewrite4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestRollbackCommitted4C tests trying to roll back a transaction which is already committed.
 func TestRollbackCommitted4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -96,6 +101,7 @@ func TestRollbackCommitted4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestRollbackDuplicate4C tests trying to roll back a transaction which has already been rolled back.
 func TestRollbackDuplicate4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -114,6 +120,7 @@ func TestRollbackDuplicate4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestRollbackOtherTxn4C tests trying to roll back the wrong transaction.
 func TestRollbackOtherTxn4C(t *testing.T) {
 	builder := newBuilder(t)

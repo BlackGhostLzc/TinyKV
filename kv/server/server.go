@@ -7,6 +7,7 @@ import (
 	"github.com/pingcap-incubator/tinykv/kv/storage/raft_storage"
 	"github.com/pingcap-incubator/tinykv/kv/transaction/latches"
 	"github.com/pingcap-incubator/tinykv/kv/transaction/mvcc"
+	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	coppb "github.com/pingcap-incubator/tinykv/proto/pkg/coprocessor"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/kvrpcpb"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/tinykvpb"
@@ -341,13 +342,141 @@ func (server *Server) KvBatchRollback(_ context.Context, req *kvrpcpb.BatchRollb
 	}
 	server.Latches.WaitForLatches(keys)
 	defer server.Latches.ReleaseLatches(keys)
+	resp := &kvrpcpb.BatchRollbackResponse{}
 
-	return nil, nil
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, err
+	}
+	txn := mvcc.NewMvccTxn(reader, req.StartVersion)
+
+	// 首先判断有没有提交，如果只要有1个 key 已经提交了，那就 fail
+	for _, key := range keys {
+		write, _, err := txn.CurrentWrite(key)
+		if err != nil {
+			return resp, err
+		}
+
+		// 说明已经成功提交了
+		// Will fail if the transaction has already been committed
+		if write != nil && write.Kind != mvcc.WriteKindRollback {
+			resp.Error = &kvrpcpb.KeyError{
+				Abort: "true",
+			}
+			return resp, nil
+		}
+	}
+
+	// 检查锁，看有没有被其他事务给上锁了
+	for _, key := range keys {
+		lock, err := txn.GetLock(key)
+		if err != nil {
+			return resp, err
+		}
+
+		// 判断有没有进行回滚
+		write, _, err := txn.CurrentWrite(key)
+		if err != nil {
+			return resp, err
+		}
+		// 已经被回滚了(两个事务 T2 和 T3 都想要锁 key, key被 T1 锁住了, T2 率先进行 checkTxnStatus 检查
+		// 并发现 key 的 primary 需要进行回滚, 然后对 key 也完成了回滚, 就出现了下面已经回滚的情况)
+		if write != nil && write.Kind == mvcc.WriteKindRollback {
+			continue
+		}
+		if lock != nil {
+			if lock.Ts != txn.StartTS {
+				// 说明被其他事务把锁给占据了, 也要进行回滚
+				txn.PutWrite(key, txn.StartTS, &mvcc.Write{
+					StartTS: txn.StartTS,
+					Kind:    mvcc.WriteKindRollback,
+				})
+				continue
+			}
+			// 否则这把锁就是这个事务持有,
+			txn.DeleteValue(key)
+			txn.DeleteLock(key)
+			txn.PutWrite(key, txn.StartTS, &mvcc.Write{
+				StartTS: txn.StartTS,
+				Kind:    mvcc.WriteKindRollback,
+			})
+			continue
+		}
+
+		// lock 为空，需要打一个标记
+		txn.PutWrite(key, txn.StartTS, &mvcc.Write{
+			StartTS: txn.StartTS,
+			Kind:    mvcc.WriteKindRollback,
+		})
+	}
+	err = server.storage.Write(req.Context, txn.Writes())
+	if err != nil {
+		return resp, err
+	}
+
+	return resp, nil
 }
 
 func (server *Server) KvResolveLock(_ context.Context, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
 	// Your Code Here (4C).
-	return nil, nil
+	resp := &kvrpcpb.ResolveLockResponse{}
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, nil
+	}
+
+	txn := mvcc.NewMvccTxn(reader, req.StartVersion)
+	iter := reader.IterCF(engine_util.CfLock)
+
+	var keys [][]byte
+	for ; iter.Valid(); iter.Next() {
+		item := iter.Item()
+		key := item.KeyCopy(nil)
+		value, err := item.ValueCopy(nil)
+		if err != nil {
+			return resp, err
+		}
+		lock, err := mvcc.ParseLock(value)
+		if err != nil {
+			return resp, err
+		}
+		if lock.Ts == txn.StartTS {
+			keys = append(keys, key)
+		}
+	}
+
+	if req.CommitVersion == 0 {
+		// rollback all
+		rbReq := &kvrpcpb.BatchRollbackRequest{
+			Keys:         keys,
+			StartVersion: txn.StartTS,
+			Context:      req.Context,
+		}
+		rbResp, err := server.KvBatchRollback(nil, rbReq)
+		if err != nil {
+			return resp, err
+		}
+		resp.Error = rbResp.Error
+		resp.RegionError = rbResp.RegionError
+		return resp, nil
+	} else if req.CommitVersion > 0 {
+		// commit those locks with the given commit timestamp
+		cmReq := &kvrpcpb.CommitRequest{
+			Keys:          keys,
+			StartVersion:  txn.StartTS,
+			CommitVersion: req.CommitVersion,
+			Context:       req.Context,
+		}
+		cmResp, err := server.KvCommit(nil, cmReq)
+		if err != nil {
+			return resp, err
+		}
+		resp.Error = cmResp.Error
+		resp.RegionError = cmResp.RegionError
+		return resp, nil
+	}
+
+	return resp, nil
 }
 
 // SQL push down commands.
