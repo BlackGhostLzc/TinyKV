@@ -253,11 +253,95 @@ func (server *Server) KvScan(_ context.Context, req *kvrpcpb.ScanRequest) (*kvrp
 
 func (server *Server) KvCheckTxnStatus(_ context.Context, req *kvrpcpb.CheckTxnStatusRequest) (*kvrpcpb.CheckTxnStatusResponse, error) {
 	// Your Code Here (4C).
-	return nil, nil
+	// 只有一个 primary key
+	var keys [][]byte
+	keys = append(keys, req.PrimaryKey)
+	server.Latches.WaitForLatches(keys)
+	defer server.Latches.ReleaseLatches(keys)
+
+	resp := &kvrpcpb.CheckTxnStatusResponse{}
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, err
+	}
+	txn := mvcc.NewMvccTxn(reader, req.LockTs)
+
+	// 看一下这个事务有没有自行回滚
+	write, _, err := txn.CurrentWrite(req.PrimaryKey)
+	if err != nil {
+		return resp, err
+	}
+	if write != nil {
+		// rolled back: lock_ttl == 0 && commit_version == 0(resp的返回值)
+		if write.Kind == mvcc.WriteKindRollback {
+			resp.Action = kvrpcpb.Action_NoAction
+			return resp, nil
+		}
+		// 否则应该是被提交了 committed: commit_version > 0
+		resp.CommitVersion = write.StartTS
+		return resp, nil
+	}
+
+	// 获取 primary key 的 lock
+	lock, err := txn.GetLock(req.PrimaryKey)
+	if err != nil {
+		return resp, err
+	}
+	if lock != nil {
+		// 判断 lock 有没有过期
+		lockTs := mvcc.PhysicalTime(lock.Ts)
+		currentTs := mvcc.PhysicalTime(req.CurrentTs)
+		if currentTs > lockTs && currentTs-lockTs >= lock.Ttl {
+			// 过期了就要对 primary key 进行回滚
+			txn.DeleteValue(req.PrimaryKey)
+			txn.DeleteLock(req.PrimaryKey)
+			txn.PutWrite(req.PrimaryKey, txn.StartTS, &mvcc.Write{
+				StartTS: req.LockTs,
+				Kind:    mvcc.WriteKindRollback,
+			})
+
+			err = server.storage.Write(req.Context, txn.Writes())
+			if err != nil {
+				return resp, err
+			}
+			resp.Action = kvrpcpb.Action_TTLExpireRollback
+		} else {
+			resp.Action = kvrpcpb.Action_NoAction
+		}
+	}
+
+	// 既没有 write,也没有 lock, 根据测试也要给一个 rollback write
+	// 这种情况是什么原因引起的呢？
+	// 因为 prewrite 过程是 primary key 和 secondary key 一起发送的，如果 prewrite primary key 丢失了
+	// 丢失的时间甚至比 secondary key 的 lock ttl 还要长，那么就有可能出现这种情况
+	// 这种情况下，primary key 所在的 tinykv 感知不到该事务的存在，而 secondary key 所在的 tinykv 知道事物的存在
+	txn.PutWrite(req.PrimaryKey, txn.StartTS, &mvcc.Write{
+		StartTS: req.LockTs,
+		Kind:    mvcc.WriteKindRollback,
+	})
+
+	err = server.storage.Write(req.Context, txn.Writes())
+	if err != nil {
+		return resp, err
+	}
+	resp.Action = kvrpcpb.Action_LockNotExistRollback
+
+	return resp, nil
 }
 
+// KvBatchRollback 调用的时机
+// 当事务想要获取某个 key 的锁的时候，发现已经存在锁了
+// 并且这把锁已经过期了
+// 那么判断这个做更改的事务有没有提交(KvCheckTxnStatus), 如果没有提交那就进行回滚
 func (server *Server) KvBatchRollback(_ context.Context, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
 	// Your Code Here (4C).
+	var keys [][]byte
+	for _, key := range req.Keys {
+		keys = append(keys, key)
+	}
+	server.Latches.WaitForLatches(keys)
+	defer server.Latches.ReleaseLatches(keys)
+
 	return nil, nil
 }
 

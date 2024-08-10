@@ -135,6 +135,7 @@ func TestRollbackOtherTxn4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCheckTxnStatusTtlExpired4C checks that if there is a lock and its ttl has expired, then it is rolled back.
 func TestCheckTxnStatusTtlExpired4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -153,6 +154,7 @@ func TestCheckTxnStatusTtlExpired4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCheckTxnStatusTtlNotExpired4C checks that if there is a lock and its ttl has not expired, then nothing changes.
 func TestCheckTxnStatusTtlNotExpired4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -172,7 +174,8 @@ func TestCheckTxnStatusTtlNotExpired4C(t *testing.T) {
 	})
 }
 
-// TestCheckTxnStatusRolledBack4C tests checking a key which has already been rolled back..
+// PASS
+// TestCheckTxnStatusRolledBack4C tests checking a key which has already been rolled back.
 func TestCheckTxnStatusRolledBack4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.checkTxnStatusRequest([]byte{3})
@@ -194,6 +197,7 @@ func TestCheckTxnStatusRolledBack4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCheckTxnStatusCommitted4C tests checking a key which has already been committed.
 func TestCheckTxnStatusCommitted4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -214,6 +218,7 @@ func TestCheckTxnStatusCommitted4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestCheckTxnStatusNoLockNoWrite4C checks if there is no data for the key, then we get the right response.
 func TestCheckTxnStatusNoLockNoWrite4C(t *testing.T) {
 	builder := newBuilder(t)

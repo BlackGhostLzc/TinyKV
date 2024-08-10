@@ -168,10 +168,9 @@ func (txn *MvccTxn) DeleteValue(key []byte) {
 	txn.writes = append(txn.writes, modify)
 }
 
-// 找到 write,这个 write.startTs = txn.startTs
+// CurrentWrite 找到 write,这个 write.startTs = txn.startTs
 // CurrentWrite searches for a write with this transaction's start timestamp. It returns a Write from the DB and that
 // write's commit timestamp, or an error.
-
 func (txn *MvccTxn) CurrentWrite(key []byte) (*Write, uint64, error) {
 	// Your Code Here (4A).
 	reader := txn.Reader
