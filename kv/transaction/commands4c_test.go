@@ -240,6 +240,7 @@ func TestCheckTxnStatusNoLockNoWrite4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestEmptyResolve4C tests a completely empty resolve request.
 func TestEmptyResolve4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -251,6 +252,7 @@ func TestEmptyResolve4C(t *testing.T) {
 	builder.assertLens(0, 0, 0)
 }
 
+// PASS
 // TestResolveCommit4C should commit all keys in the specified transaction.
 func TestResolveCommit4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -278,6 +280,7 @@ func TestResolveCommit4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestResolveRollback4C should rollback all keys in the specified transaction.
 func TestResolveRollback4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -303,6 +306,7 @@ func TestResolveRollback4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestResolveCommitWritten4C tests a resolve where the matched keys are already committed or rolled back.
 func TestResolveCommitWritten4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -330,6 +334,7 @@ func TestResolveCommitWritten4C(t *testing.T) {
 	})
 }
 
+// PASS
 // TestResolveRollbackWritten4C tests a rollback resolve where data has already been committed or rolled back.
 func TestResolveRollbackWritten4C(t *testing.T) {
 	builder := newBuilder(t)

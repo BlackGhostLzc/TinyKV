@@ -249,7 +249,56 @@ func (server *Server) KvCommit(_ context.Context, req *kvrpcpb.CommitRequest) (*
 
 func (server *Server) KvScan(_ context.Context, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
 	// Your Code Here (4C).
-	return nil, nil
+	resp := &kvrpcpb.ScanResponse{}
+	reader, err := server.storage.Reader(req.Context)
+	if err != nil {
+		return resp, err
+	}
+	txn := mvcc.NewMvccTxn(reader, req.Version)
+	scanner := mvcc.NewScanner(req.StartKey, txn)
+	kvPairs := make([]*kvrpcpb.KvPair, 0)
+	for i := 0; i < int(req.Limit); i++ {
+		if !scanner.Iter.Valid() {
+			break
+		}
+		key, value, err := scanner.Next()
+
+		if err != nil {
+			return resp, err
+		}
+		if key == nil {
+			continue
+		}
+		lock, err := txn.GetLock(key)
+		if err != nil {
+			return resp, err
+		}
+		// 这里不能够读取，否则可能存在不可重复读的问题,当前正在有事务尝试对这个 key 作出更改
+		// 假如 lock.Ts < txn.startTs 并且 lock.commitTs > txn.startTs，这样会存在不可重复读
+		if lock != nil && lock.Ts < txn.StartTS {
+			pair := &kvrpcpb.KvPair{
+				Error: &kvrpcpb.KeyError{
+					Locked: &kvrpcpb.LockInfo{
+						PrimaryLock: lock.Primary,
+						LockVersion: lock.Ts,
+						Key:         key,
+						LockTtl:     lock.Ttl,
+					},
+				},
+			}
+			kvPairs = append(kvPairs, pair)
+			continue
+		}
+		if value != nil {
+			pair := &kvrpcpb.KvPair{
+				Key:   key,
+				Value: value,
+			}
+			kvPairs = append(kvPairs, pair)
+		}
+	}
+	resp.Pairs = kvPairs
+	return resp, nil
 }
 
 func (server *Server) KvCheckTxnStatus(_ context.Context, req *kvrpcpb.CheckTxnStatusRequest) (*kvrpcpb.CheckTxnStatusResponse, error) {
@@ -306,8 +355,10 @@ func (server *Server) KvCheckTxnStatus(_ context.Context, req *kvrpcpb.CheckTxnS
 				return resp, err
 			}
 			resp.Action = kvrpcpb.Action_TTLExpireRollback
+			return resp, nil
 		} else {
 			resp.Action = kvrpcpb.Action_NoAction
+			return resp, nil
 		}
 	}
 
